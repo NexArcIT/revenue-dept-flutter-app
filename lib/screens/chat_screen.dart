@@ -22,10 +22,10 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.mode});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreen> createState() => ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final List<ChatMessage> _messages = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -57,6 +57,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat();
+  }
+
+  /// Load a historical session's messages into this chat screen.
+  void loadSession(String sessionId, List<Map<String, dynamic>> rawMessages) {
+    final msgs = rawMessages.map((m) {
+      final role = m['role'] as String? ?? 'assistant';
+      final content = m['content'] as String? ?? m['text'] as String? ?? '';
+      final sources = m['sources'] as List<dynamic>?;
+      return ChatMessage(role: role, content: content, sources: sources);
+    }).toList();
+
+    setState(() {
+      _sessionId = sessionId;
+      _messages
+        ..clear()
+        ..addAll(msgs);
+      _loading = false;
+    });
+    _scrollToBottom();
   }
 
   @override

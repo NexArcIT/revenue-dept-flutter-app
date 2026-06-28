@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import 'chat_screen.dart';
+import 'history_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onLogout;
@@ -17,20 +18,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  final List<_NavItem> _navItems = const [
-    _NavItem(
-      label: 'Knowledge Chat',
-      icon: Icons.chat_bubble_outline,
-      activeIcon: Icons.chat_bubble,
-      mode: 'knowledge',
-    ),
-    _NavItem(
-      label: 'Charge Sheet',
-      icon: Icons.description_outlined,
-      activeIcon: Icons.description,
-      mode: 'chargesheet',
-    ),
-  ];
+  // Keys to reset/control chat screens
+  final GlobalKey<ChatScreenState> _knowledgeKey = GlobalKey<ChatScreenState>();
+  final GlobalKey<ChatScreenState> _chargesheetKey = GlobalKey<ChatScreenState>();
 
   String get _userName {
     if (widget.user == null) return 'Officer';
@@ -45,30 +35,18 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Sign Out',
-            style: TextStyle(
-                color: AppTheme.darkGreen, fontWeight: FontWeight.w700)),
+        title: const Text('Sign Out', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
         content: const Text('Are you sure you want to sign out?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryGreen,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.primaryGreen),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Sign Out'),
           ),
         ],
       ),
     );
-
     if (confirmed == true) {
       await ApiService().logout();
       final prefs = await SharedPreferences.getInstance();
@@ -77,89 +55,142 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _openHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HistoryScreen(
+          onResume: (sessionId, mode, messages, title) {
+            Navigator.pop(context); // close history screen
+            // Switch to correct tab then load session
+            setState(() => _currentIndex = mode == 'chargesheet' ? 1 : 0);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mode == 'chargesheet') {
+                _chargesheetKey.currentState?.loadSession(sessionId, messages);
+              } else {
+                _knowledgeKey.currentState?.loadSession(sessionId, messages);
+              }
+            });
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFf5f7f5),
       appBar: AppBar(
         backgroundColor: AppTheme.darkGreen,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        elevation: 0,
+        titleSpacing: 16,
+        title: Row(
           children: [
-            const Text(
-              'Revenue Department',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(20),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white.withAlpha(30)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(5),
+                child: Image.asset('assets/images/tn-emblem.png', fit: BoxFit.contain),
               ),
             ),
-            Text(
-              'Welcome, $_userName',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.7),
-                fontSize: 11,
-                fontWeight: FontWeight.w400,
-              ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Revenue Department',
+                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+                Text('Welcome, $_userName',
+                    style: TextStyle(color: Colors.white.withAlpha(179), fontSize: 11.5, fontWeight: FontWeight.w400)),
+              ],
             ),
           ],
         ),
         actions: [
+          // History button
           IconButton(
-            icon: const Icon(Icons.logout_outlined, color: Colors.white70),
+            icon: const Icon(Icons.history_rounded, color: Colors.white, size: 24),
+            tooltip: 'Chat History',
+            onPressed: _openHistory,
+          ),
+          // Logout
+          IconButton(
+            icon: const Icon(Icons.logout_rounded, color: Colors.white70, size: 22),
             tooltip: 'Sign Out',
             onPressed: _logout,
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: IndexedStack(
         index: _currentIndex,
-        children: _navItems
-            .map((item) => ChatScreen(mode: item.mode))
-            .toList(),
+        children: [
+          ChatScreen(key: _knowledgeKey, mode: 'knowledge'),
+          ChatScreen(key: _chargesheetKey, mode: 'chargesheet'),
+        ],
       ),
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: Color(0x18000000),
-              blurRadius: 10,
-              offset: Offset(0, -2),
-            ),
-          ],
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: const Border(top: BorderSide(color: Color(0xFFe8ede9), width: 1)),
+          boxShadow: [BoxShadow(color: Colors.black.withAlpha(15), blurRadius: 12, offset: const Offset(0, -3))],
         ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (i) => setState(() => _currentIndex = i),
-          selectedItemColor: AppTheme.primaryGreen,
-          unselectedItemColor: Colors.grey.shade400,
-          backgroundColor: Colors.white,
-          type: BottomNavigationBarType.fixed,
-          selectedLabelStyle: const TextStyle(
-              fontWeight: FontWeight.w700, fontSize: 12),
-          unselectedLabelStyle: const TextStyle(fontSize: 12),
-          items: _navItems.map((item) {
-            return BottomNavigationBarItem(
-              icon: Icon(item.icon),
-              activeIcon: Icon(item.activeIcon),
-              label: item.label,
-            );
-          }).toList(),
+        child: SafeArea(
+          child: SizedBox(
+            height: 60,
+            child: Row(
+              children: [
+                _BottomTab(label: 'Knowledge Chat', icon: Icons.chat_bubble_outline_rounded, activeIcon: Icons.chat_bubble_rounded, isActive: _currentIndex == 0, onTap: () => setState(() => _currentIndex = 0)),
+                _BottomTab(label: 'Charge Sheet', icon: Icons.description_outlined, activeIcon: Icons.description_rounded, isActive: _currentIndex == 1, onTap: () => setState(() => _currentIndex = 1)),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _NavItem {
+class _BottomTab extends StatelessWidget {
   final String label;
   final IconData icon;
   final IconData activeIcon;
-  final String mode;
+  final bool isActive;
+  final VoidCallback onTap;
 
-  const _NavItem({
-    required this.label,
-    required this.icon,
-    required this.activeIcon,
-    required this.mode,
-  });
+  const _BottomTab({required this.label, required this.icon, required this.activeIcon, required this.isActive, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: isActive ? AppTheme.primaryGreen : Colors.transparent, width: 2.5)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(isActive ? activeIcon : icon, size: 22, color: isActive ? AppTheme.primaryGreen : Colors.grey.shade400),
+              const SizedBox(height: 3),
+              Text(label,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                    color: isActive ? AppTheme.primaryGreen : Colors.grey.shade400,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

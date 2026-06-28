@@ -19,13 +19,12 @@ class ApiService {
     final token = await _getToken();
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (token != null && token.isNotEmpty) {
-      // Backend uses cookie named 'session_token'
       headers['Cookie'] = 'session_token=$token';
     }
     return headers;
   }
 
-  /// Login. The server sets an httpOnly cookie — we extract it from Set-Cookie header.
+  /// Login — extracts session_token from Set-Cookie header.
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/auth/login'),
@@ -34,35 +33,22 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      // Extract session_token from Set-Cookie header
       final setCookie = response.headers['set-cookie'] ?? '';
       String? token;
-      for (final part in setCookie.split(';')) {
-        final trimmed = part.trim();
-        if (trimmed.startsWith('session_token=')) {
-          token = trimmed.substring('session_token='.length);
-          break;
-        }
-      }
-      // Also check for comma-separated cookies
-      if (token == null) {
-        for (final cookie in setCookie.split(',')) {
-          for (final part in cookie.split(';')) {
-            final trimmed = part.trim();
-            if (trimmed.startsWith('session_token=')) {
-              token = trimmed.substring('session_token='.length);
-              break;
-            }
+      for (final segment in setCookie.split(RegExp(r',(?=[^;])'))) {
+        for (final part in segment.split(';')) {
+          final trimmed = part.trim();
+          if (trimmed.startsWith('session_token=')) {
+            token = trimmed.substring('session_token='.length);
+            break;
           }
-          if (token != null) break;
         }
+        if (token != null) break;
       }
-
       if (token != null && token.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_tokenKey, token);
       }
-
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       return data['user'] as Map<String, dynamic>? ?? data;
     } else {
@@ -73,8 +59,7 @@ class ApiService {
 
   Future<void> logout() async {
     try {
-      final headers = await _authHeaders();
-      await http.post(Uri.parse('$baseUrl/api/auth/logout'), headers: headers);
+      await http.post(Uri.parse('$baseUrl/api/auth/logout'), headers: await _authHeaders());
     } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
@@ -82,12 +67,10 @@ class ApiService {
 
   Future<Map<String, dynamic>?> getMe() async {
     try {
-      final headers = await _authHeaders();
-      final response =
-          await http.get(Uri.parse('$baseUrl/api/auth/me'), headers: headers);
+      final response = await http.get(Uri.parse('$baseUrl/api/auth/me'), headers: await _authHeaders());
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        return data['user'] as Map<String, dynamic>? ?? data;
+        return data['user'] as Map<String, dynamic>?;
       }
       return null;
     } catch (_) {
@@ -95,51 +78,65 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> sendChat(
-    String message,
-    String mode,
-    String? sessionId,
-  ) async {
-    final headers = await _authHeaders();
+  Future<Map<String, dynamic>> sendChat(String message, String mode, String? sessionId) async {
     final body = <String, dynamic>{'message': message, 'mode': mode};
     if (sessionId != null) body['sessionId'] = sessionId;
-
     final response = await http.post(
       Uri.parse('$baseUrl/api/chat'),
-      headers: headers,
+      headers: await _authHeaders(),
       body: jsonEncode(body),
     );
-
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      final data = _tryDecode(response.body);
-      throw Exception(data['error'] ?? data['message'] ?? 'Chat request failed (${response.statusCode})');
-    }
+    if (response.statusCode == 200) return jsonDecode(response.body) as Map<String, dynamic>;
+    final data = _tryDecode(response.body);
+    throw Exception(data['error'] ?? data['message'] ?? 'Chat failed (${response.statusCode})');
   }
 
-  Future<List<dynamic>> getSessions() async {
+  /// List all sessions for current user, newest first.
+  Future<List<Map<String, dynamic>>> getSessions() async {
     try {
-      final headers = await _authHeaders();
-      final response = await http.get(
-          Uri.parse('$baseUrl/api/chat/sessions'),
-          headers: headers);
+      final response = await http.get(Uri.parse('$baseUrl/api/chat/sessions'), headers: await _authHeaders());
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) return data;
-        if (data is Map && data['sessions'] is List) return data['sessions'];
+        final data = _tryDecode(response.body);
+        final list = data['sessions'] as List<dynamic>? ?? [];
+        return list.cast<Map<String, dynamic>>();
       }
       return [];
     } catch (_) {
       return [];
+    }
+  }
+
+  /// Load a specific session's full messages.
+  Future<Map<String, dynamic>?> getSession(String sessionId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/chat/sessions/$sessionId'),
+        headers: await _authHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final data = _tryDecode(response.body);
+        return data['session'] as Map<String, dynamic>?;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Delete a session.
+  Future<bool> deleteSession(String sessionId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/chat/sessions/$sessionId'),
+        headers: await _authHeaders(),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
     }
   }
 
   Map<String, dynamic> _tryDecode(String body) {
-    try {
-      return jsonDecode(body) as Map<String, dynamic>;
-    } catch (_) {
-      return {};
-    }
+    try { return jsonDecode(body) as Map<String, dynamic>; } catch (_) { return {}; }
   }
 }
