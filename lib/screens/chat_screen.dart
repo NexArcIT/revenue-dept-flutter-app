@@ -1,45 +1,61 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 
 class ChatMessage {
-  final String role; // 'user' or 'assistant'
+  final String role;
   final String content;
   final List<dynamic>? sources;
+  final DateTime timestamp;
 
-  const ChatMessage({
+  ChatMessage({
     required this.role,
     required this.content,
     this.sources,
-  });
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
 }
 
 class ChatScreen extends StatefulWidget {
-  final String mode; // 'knowledge' or 'chargesheet'
-
+  final String mode;
   const ChatScreen({super.key, required this.mode});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen>
-    with TickerProviderStateMixin {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final List<ChatMessage> _messages = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String? _sessionId;
   bool _loading = false;
-
-  // Typing indicator animation
   late AnimationController _dotController;
+
+  // Pre-prompted suggestions per mode
+  List<String> get _suggestions => widget.mode == 'chargesheet'
+      ? [
+          'Generate a charge sheet for unauthorized encroachment of government land',
+          'Draft charge sheet for failure to maintain revenue records',
+          'Charge sheet for corruption in land mutation process',
+          'Charge sheet for dereliction of duty in survey settlement',
+        ]
+      : [
+          'What is the procedure for land patta transfer?',
+          'Explain the chitta and adangal records',
+          'What are the rules for encroachment removal?',
+          'How is fair value of land determined in Tamil Nadu?',
+          'What is the process for sub-division of agricultural land?',
+          'Explain the revenue village administration structure',
+        ];
 
   @override
   void initState() {
     super.initState();
     _dotController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1400),
     )..repeat();
   }
 
@@ -56,18 +72,18 @@ class _ChatScreenState extends State<ChatScreen>
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
         );
       }
     });
   }
 
-  Future<void> _sendMessage() async {
-    final text = _inputController.text.trim();
+  Future<void> _sendMessage([String? override]) async {
+    final text = (override ?? _inputController.text).trim();
     if (text.isEmpty || _loading) return;
+    if (override == null) _inputController.clear();
 
-    _inputController.clear();
     setState(() {
       _messages.add(ChatMessage(role: 'user', content: text));
       _loading = true;
@@ -75,254 +91,161 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollToBottom();
 
     try {
-      final response =
-          await ApiService().sendChat(text, widget.mode, _sessionId);
-      final answer =
-          response['answer'] as String? ?? response['message'] as String? ?? '';
-      final newSessionId = response['sessionId'] as String?;
+      final response = await ApiService().sendChat(text, widget.mode, _sessionId);
+      final answer = response['answer'] as String? ?? response['message'] as String? ?? '';
+      final newSession = response['sessionId'] as String?;
       final sources = response['sources'] as List<dynamic>?;
 
-      setState(() {
-        _sessionId = newSessionId ?? _sessionId;
-        _messages.add(ChatMessage(
-          role: 'assistant',
-          content: answer,
-          sources: sources,
-        ));
-      });
+      if (mounted) {
+        setState(() {
+          _sessionId = newSession ?? _sessionId;
+          _messages.add(ChatMessage(role: 'assistant', content: answer, sources: sources));
+          _loading = false;
+        });
+        _scrollToBottom();
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
-            backgroundColor: Colors.red.shade700,
-          ),
-        );
         setState(() {
-          _messages.add(const ChatMessage(
+          _messages.add(ChatMessage(
             role: 'assistant',
-            content:
-                'Sorry, I encountered an error. Please try again.',
+            content: 'Sorry, I encountered an error. Please check your connection and try again.\n\nDetails: ${e.toString().replaceAll('Exception: ', '')}',
           ));
+          _loading = false;
         });
+        _scrollToBottom();
       }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-      _scrollToBottom();
     }
   }
 
-  String get _title =>
-      widget.mode == 'chargesheet' ? 'Charge Sheet Generator' : 'Knowledge Chat';
+  void _resetSession() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('New Conversation', style: TextStyle(fontWeight: FontWeight.w800)),
+        content: const Text('Start a fresh conversation? Current messages will be cleared.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.primaryGreen),
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() { _messages.clear(); _sessionId = null; });
+            },
+            child: const Text('New Chat'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isChargesheet = widget.mode == 'chargesheet';
     return Scaffold(
-      backgroundColor: AppTheme.bgGreen,
+      backgroundColor: const Color(0xFFf5f7f5),
       appBar: AppBar(
-        title: Text(_title),
         backgroundColor: AppTheme.darkGreen,
         foregroundColor: Colors.white,
+        elevation: 0,
+        title: Row(
+          children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(25),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                isChargesheet ? Icons.description_outlined : Icons.chat_bubble_outline_rounded,
+                size: 17, color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isChargesheet ? 'Charge Sheet Generator' : 'Knowledge Chat',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.white),
+                ),
+                if (_sessionId != null)
+                  Text('Session active', style: TextStyle(fontSize: 10, color: Colors.white.withAlpha(153))),
+              ],
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_outlined),
-            tooltip: 'New session',
-            onPressed: () {
-              setState(() {
-                _messages.clear();
-                _sessionId = null;
-              });
-            },
-          ),
+          if (_messages.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.add_comment_outlined, size: 22),
+              tooltip: 'New conversation',
+              onPressed: _resetSession,
+            ),
         ],
       ),
       body: Column(
         children: [
-          // Hint card for chargesheet mode
-          if (widget.mode == 'chargesheet') _buildHintCard(),
+          // Mode hint banner
+          _ModeHintBanner(mode: widget.mode),
 
-          // Messages list
+          // Messages or empty state
           Expanded(
             child: _messages.isEmpty
-                ? _buildEmptyState()
+                ? _EmptyState(mode: widget.mode, suggestions: _suggestions, onTap: _sendMessage)
                 : ListView.builder(
                     controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
                     itemCount: _messages.length + (_loading ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (_loading && index == _messages.length) {
-                        return _TypingIndicator(controller: _dotController);
+                    itemBuilder: (ctx, i) {
+                      if (_loading && i == _messages.length) {
+                        return _TypingBubble(controller: _dotController);
                       }
-                      return _MessageBubble(message: _messages[index]);
+                      return _MessageBubble(
+                        message: _messages[i],
+                        onSuggestionTap: _sendMessage,
+                      );
                     },
                   ),
           ),
 
           // Input bar
-          _buildInputBar(),
+          _InputBar(
+            controller: _inputController,
+            loading: _loading,
+            mode: widget.mode,
+            onSend: _sendMessage,
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildHintCard() {
+/* ─── Mode hint banner ─────────────────────────────── */
+class _ModeHintBanner extends StatelessWidget {
+  final String mode;
+  const _ModeHintBanner({required this.mode});
+
+  @override
+  Widget build(BuildContext context) {
+    if (mode != 'chargesheet') return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFfffbeb), Color(0xFFfef3c7)],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFfcd34d), width: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(colors: [Color(0xFFfef9ee), Color(0xFFfffbf0)]),
+        border: Border(bottom: BorderSide(color: Color(0xFFf3d47a), width: 1)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.lightbulb_outline,
-              color: Color(0xFFd97706), size: 22),
-          const SizedBox(width: 10),
+          const Icon(Icons.lightbulb_outline_rounded, color: Color(0xFFd97706), size: 16),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Enter case facts and the AI will generate a legally precise charge sheet.',
-              style: TextStyle(
-                color: const Color(0xFF92400e),
-                fontSize: 13,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryGreen.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                widget.mode == 'chargesheet'
-                    ? Icons.description_outlined
-                    : Icons.chat_bubble_outline,
-                size: 38,
-                color: AppTheme.primaryGreen,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              widget.mode == 'chargesheet'
-                  ? 'Start a Charge Sheet'
-                  : 'Ask Anything',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.darkGreen,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              widget.mode == 'chargesheet'
-                  ? 'Describe the case facts below to generate a charge sheet.'
-                  : 'Ask any question about revenue policies, GO orders, or land records.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-                height: 1.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 12,
-        top: 10,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 10,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _inputController,
-              maxLines: 4,
-              minLines: 1,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                hintText: widget.mode == 'chargesheet'
-                    ? 'Describe the case facts...'
-                    : 'Ask a question...',
-                hintStyle: TextStyle(color: Colors.grey.shade400),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide: const BorderSide(color: AppTheme.lightBorder),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide: const BorderSide(color: AppTheme.lightBorder),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide:
-                      const BorderSide(color: AppTheme.primaryGreen, width: 2),
-                ),
-                filled: true,
-                fillColor: const Color(0xFFf8fdf9),
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 10),
-              ),
-              onSubmitted: (_) => _sendMessage(),
-            ),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: _sendMessage,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: _loading
-                    ? AppTheme.primaryGreen.withOpacity(0.5)
-                    : AppTheme.primaryGreen,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.primaryGreen.withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: const Icon(Icons.send_rounded,
-                  color: Colors.white, size: 22),
+              'Describe the case facts — the AI will generate a legally precise charge sheet.',
+              style: TextStyle(fontSize: 12.5, color: const Color(0xFF92400e), height: 1.4),
             ),
           ),
         ],
@@ -331,9 +254,111 @@ class _ChatScreenState extends State<ChatScreen>
   }
 }
 
+/* ─── Empty / suggestions state ───────────────────── */
+class _EmptyState extends StatelessWidget {
+  final String mode;
+  final List<String> suggestions;
+  final void Function(String) onTap;
+
+  const _EmptyState({required this.mode, required this.suggestions, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isChargesheet = mode == 'chargesheet';
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const SizedBox(height: 20),
+
+          // Hero icon
+          Container(
+            width: 88, height: 88,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft, end: Alignment.bottomRight,
+                colors: [Color(0xFF1a6b2e), Color(0xFF0f3d1a)],
+              ),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [BoxShadow(color: const Color(0xFF1a6b2e).withAlpha(77), blurRadius: 20, offset: const Offset(0, 8))],
+            ),
+            child: Icon(
+              isChargesheet ? Icons.description_rounded : Icons.forum_rounded,
+              size: 42, color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          Text(
+            isChargesheet ? 'Charge Sheet Generator' : 'Knowledge Chat',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppTheme.darkGreen, letterSpacing: -0.5),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isChargesheet
+                ? 'Describe the case facts and the AI will generate a legally precise charge sheet instantly.'
+                : 'Ask any question about revenue policies, GO orders, land records, or departmental procedures.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade600, height: 1.6),
+          ),
+          const SizedBox(height: 32),
+
+          // Suggested prompts
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Try asking',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey.shade500, letterSpacing: 0.5),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          ...suggestions.map((s) => _SuggestionChip(text: s, onTap: () => onTap(s))).toList(),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+}
+
+class _SuggestionChip extends StatelessWidget {
+  final String text;
+  final VoidCallback onTap;
+  const _SuggestionChip({required this.text, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFc5e0cc)),
+          boxShadow: [BoxShadow(color: Colors.black.withAlpha(8), blurRadius: 6, offset: const Offset(0, 2))],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.arrow_forward_ios_rounded, size: 13, color: AppTheme.primaryGreen),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(text, style: const TextStyle(fontSize: 13.5, color: Color(0xFF1a3020), fontWeight: FontWeight.w500, height: 1.4)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* ─── Message bubble ───────────────────────────────── */
 class _MessageBubble extends StatefulWidget {
   final ChatMessage message;
-  const _MessageBubble({required this.message});
+  final void Function(String) onSuggestionTap;
+  const _MessageBubble({required this.message, required this.onSuggestionTap});
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -341,236 +366,322 @@ class _MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<_MessageBubble> {
   bool _showSources = false;
+  bool _copied = false;
 
   bool get _isUser => widget.message.role == 'user';
+
+  void _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.message.content));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _copied = false);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
-        crossAxisAlignment:
-            _isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: _isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment:
-                _isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: _isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (!_isUser) ...[
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: AppTheme.darkGreen,
-                  child: const Icon(Icons.smart_toy_outlined,
-                      color: Colors.white, size: 18),
-                ),
+                _Avatar(isUser: false),
                 const SizedBox(width: 8),
               ],
               Flexible(
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.75,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _isUser ? AppTheme.primaryGreen : Colors.white,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(18),
-                      topRight: const Radius.circular(18),
-                      bottomLeft: Radius.circular(_isUser ? 18 : 4),
-                      bottomRight: Radius.circular(_isUser ? 4 : 18),
+                child: Column(
+                  crossAxisAlignment: _isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  children: [
+                    // Sender label
+                    Padding(
+                      padding: EdgeInsets.only(
+                        left: _isUser ? 0 : 4,
+                        right: _isUser ? 4 : 0,
+                        bottom: 4,
+                      ),
+                      child: Text(
+                        _isUser ? 'You' : 'Revenue AI',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade500),
+                      ),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
+                    // Bubble
+                    Container(
+                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+                      decoration: BoxDecoration(
+                        color: _isUser ? AppTheme.primaryGreen : Colors.white,
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(18),
+                          topRight: const Radius.circular(18),
+                          bottomLeft: Radius.circular(_isUser ? 18 : 4),
+                          bottomRight: Radius.circular(_isUser ? 4 : 18),
+                        ),
+                        boxShadow: [BoxShadow(color: Colors.black.withAlpha(15), blurRadius: 8, offset: const Offset(0, 2))],
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                      child: Text(
+                        widget.message.content,
+                        style: TextStyle(
+                          color: _isUser ? Colors.white : const Color(0xFF1a1a2e),
+                          fontSize: 14.5, height: 1.55,
+                        ),
+                      ),
+                    ),
+                    // Action row for assistant
+                    if (!_isUser) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          _ActionButton(
+                            icon: _copied ? Icons.check_rounded : Icons.copy_rounded,
+                            label: _copied ? 'Copied' : 'Copy',
+                            onTap: _copy,
+                            color: _copied ? Colors.green : Colors.grey.shade500,
+                          ),
+                          if (widget.message.sources != null && widget.message.sources!.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            _ActionButton(
+                              icon: Icons.source_outlined,
+                              label: '${widget.message.sources!.length} source${widget.message.sources!.length > 1 ? 's' : ''}',
+                              onTap: () => setState(() => _showSources = !_showSources),
+                              color: AppTheme.primaryGreen,
+                            ),
+                          ],
+                        ],
                       ),
                     ],
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  child: Text(
-                    widget.message.content,
-                    style: TextStyle(
-                      color: _isUser ? Colors.white : const Color(0xFF1a1a1a),
-                      fontSize: 14.5,
-                      height: 1.5,
-                    ),
-                  ),
+                  ],
                 ),
               ),
               if (_isUser) ...[
                 const SizedBox(width: 8),
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: AppTheme.primaryGreen.withOpacity(0.15),
-                  child: const Icon(Icons.person_outline,
-                      color: AppTheme.primaryGreen, size: 18),
-                ),
+                _Avatar(isUser: true),
               ],
             ],
           ),
 
-          // Sources section for assistant messages
-          if (!_isUser &&
-              widget.message.sources != null &&
-              widget.message.sources!.isNotEmpty) ...[
-            const SizedBox(height: 6),
+          // Sources panel
+          if (!_isUser && _showSources && widget.message.sources != null)
             Padding(
-              padding: const EdgeInsets.only(left: 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    onTap: () =>
-                        setState(() => _showSources = !_showSources),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: AppTheme.bgGreen,
-                        borderRadius: BorderRadius.circular(8),
-                        border:
-                            Border.all(color: AppTheme.lightBorder),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.source_outlined,
-                              size: 14,
-                              color: AppTheme.primaryGreen),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${widget.message.sources!.length} source${widget.message.sources!.length > 1 ? 's' : ''}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.primaryGreen,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Icon(
-                            _showSources
-                                ? Icons.expand_less
-                                : Icons.expand_more,
-                            size: 14,
-                            color: AppTheme.primaryGreen,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (_showSources)
-                    Container(
-                      margin: const EdgeInsets.only(top: 6),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTheme.lightBorder),
-                      ),
-                      child: Column(
-                        children: widget.message.sources!
-                            .asMap()
-                            .entries
-                            .map((entry) {
-                          final src = entry.value;
-                          final title = src is Map
-                              ? (src['title'] ?? src['filename'] ?? 'Source ${entry.key + 1}')
-                              : 'Source ${entry.key + 1}';
-                          return Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 3),
-                            child: Row(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
-                              children: [
-                                const Icon(Icons.article_outlined,
-                                    size: 14,
-                                    color: AppTheme.primaryGreen),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    title.toString(),
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Color(0xFF374151),
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                ],
+              padding: const EdgeInsets.only(left: 44, top: 6),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgGreen,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.lightBorder),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Sources', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.primaryGreen, letterSpacing: 0.5)),
+                    const SizedBox(height: 8),
+                    ...widget.message.sources!.asMap().entries.map((entry) {
+                      final src = entry.value;
+                      final title = src is Map
+                          ? (src['title'] ?? src['filename'] ?? 'Source ${entry.key + 1}')
+                          : 'Source ${entry.key + 1}';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.article_outlined, size: 14, color: AppTheme.primaryGreen),
+                            const SizedBox(width: 6),
+                            Expanded(child: Text(title.toString(), style: const TextStyle(fontSize: 12.5, color: Color(0xFF374151), height: 1.4))),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
               ),
             ),
-          ],
         ],
       ),
     );
   }
 }
 
-class _TypingIndicator extends StatelessWidget {
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color color;
+  const _ActionButton({required this.icon, required this.label, required this.onTap, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  final bool isUser;
+  const _Avatar({required this.isUser});
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: isUser ? const Color(0xFFe8f5ec) : AppTheme.darkGreen,
+      child: Icon(
+        isUser ? Icons.person_outline_rounded : Icons.smart_toy_outlined,
+        size: 17,
+        color: isUser ? AppTheme.primaryGreen : Colors.white,
+      ),
+    );
+  }
+}
+
+/* ─── Typing bubble ────────────────────────────────── */
+class _TypingBubble extends StatelessWidget {
   final AnimationController controller;
-  const _TypingIndicator({required this.controller});
+  const _TypingBubble({required this.controller});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: AppTheme.darkGreen,
-            child: const Icon(Icons.smart_toy_outlined,
-                color: Colors.white, size: 18),
-          ),
+          const _Avatar(isUser: false),
           const SizedBox(width: 8),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-                bottomLeft: Radius.circular(4),
-                bottomRight: Radius.circular(18),
+                topLeft: Radius.circular(18), topRight: Radius.circular(18),
+                bottomLeft: Radius.circular(4), bottomRight: Radius.circular(18),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              boxShadow: [BoxShadow(color: Colors.black.withAlpha(15), blurRadius: 8, offset: const Offset(0, 2))],
             ),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: List.generate(3, (i) {
                 return AnimatedBuilder(
                   animation: controller,
-                  builder: (context, _) {
-                    final offset = (controller.value - i * 0.15).clamp(0.0, 1.0);
-                    final scale =
-                        0.6 + 0.4 * (1 - (2 * offset - 1).abs().clamp(0.0, 1.0));
-                    return Container(
-                      margin: EdgeInsets.only(right: i < 2 ? 5 : 0),
-                      width: 8 * scale,
-                      height: 8 * scale,
-                      decoration: BoxDecoration(
-                        color:
-                            AppTheme.primaryGreen.withOpacity(0.5 + 0.5 * scale),
-                        shape: BoxShape.circle,
+                  builder: (_, __) {
+                    final t = ((controller.value * 3) - i).clamp(0.0, 1.0);
+                    final bounce = (t < 0.5 ? t : 1 - t) * 2;
+                    return Transform.translate(
+                      offset: Offset(0, -5 * bounce),
+                      child: Container(
+                        margin: EdgeInsets.only(right: i < 2 ? 6 : 0),
+                        width: 8, height: 8,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryGreen.withAlpha(((0.4 + 0.6 * bounce) * 255).toInt()),
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     );
                   },
                 );
               }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('Thinking...', style: TextStyle(fontSize: 11, color: Colors.grey.shade400, fontStyle: FontStyle.italic)),
+        ],
+      ),
+    );
+  }
+}
+
+/* ─── Input bar ────────────────────────────────────── */
+class _InputBar extends StatelessWidget {
+  final TextEditingController controller;
+  final bool loading;
+  final String mode;
+  final void Function([String?]) onSend;
+
+  const _InputBar({required this.controller, required this.loading, required this.mode, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(top: BorderSide(color: Color(0xFFe8ede9), width: 1)),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(10), blurRadius: 12, offset: const Offset(0, -3))],
+      ),
+      padding: EdgeInsets.only(
+        left: 14, right: 12, top: 10,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 10,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFf5faf6),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFc5e0cc)),
+              ),
+              child: TextField(
+                controller: controller,
+                maxLines: 5,
+                minLines: 1,
+                textCapitalization: TextCapitalization.sentences,
+                style: const TextStyle(fontSize: 14.5, height: 1.45),
+                decoration: InputDecoration(
+                  hintText: mode == 'chargesheet' ? 'Describe case facts...' : 'Ask a question...',
+                  hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                ),
+                onSubmitted: (_) => onSend(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: loading ? null : () => onSend(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 46, height: 46,
+              decoration: BoxDecoration(
+                gradient: loading
+                    ? null
+                    : const LinearGradient(
+                        begin: Alignment.topLeft, end: Alignment.bottomRight,
+                        colors: [Color(0xFF1a6b2e), Color(0xFF0f3d1a)],
+                      ),
+                color: loading ? const Color(0xFFa7c4ad) : null,
+                shape: BoxShape.circle,
+                boxShadow: loading ? [] : [BoxShadow(color: const Color(0xFF1a6b2e).withAlpha(77), blurRadius: 10, offset: const Offset(0, 3))],
+              ),
+              child: loading
+                  ? const Padding(
+                      padding: EdgeInsets.all(13),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
             ),
           ),
         ],
