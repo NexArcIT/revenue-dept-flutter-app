@@ -110,8 +110,16 @@ class ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollToBottom();
 
     try {
-      final response = await ApiService().sendChat(text, widget.mode, _sessionId);
-      final answer = response['answer'] as String? ?? response['message'] as String? ?? '';
+      // Build full history for the server (all prior messages + new user message)
+      final history = _messages.map((m) => {'role': m.role, 'content': m.content}).toList();
+
+      final response = await ApiService().sendChat(
+        messages: history,
+        mode: widget.mode,
+        sessionId: _sessionId,
+      );
+      // Server returns { reply, sources, steps } — not 'answer'
+      final answer = response['reply'] as String? ?? response['answer'] as String? ?? response['message'] as String? ?? '';
       final newSession = response['sessionId'] as String?;
       final sources = response['sources'] as List<dynamic>?;
 

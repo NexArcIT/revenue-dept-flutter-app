@@ -78,9 +78,18 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> sendChat(String message, String mode, String? sessionId) async {
-    final body = <String, dynamic>{'message': message, 'mode': mode};
+  /// Send chat. The server expects the full messages history array.
+  Future<Map<String, dynamic>> sendChat({
+    required List<Map<String, String>> messages,
+    required String mode,
+    String? sessionId,
+  }) async {
+    final body = <String, dynamic>{
+      'messages': messages,
+      'mode': mode,
+    };
     if (sessionId != null) body['sessionId'] = sessionId;
+
     final response = await http.post(
       Uri.parse('$baseUrl/api/chat'),
       headers: await _authHeaders(),
